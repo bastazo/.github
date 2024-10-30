@@ -1,6 +1,6 @@
 ---
 name: Bug report
-about: Create an issue to report a bug in the Spartan front-end
+about: Create an issue to report a bug
 title: "[BUG]"
 labels: bug
 assignees: ''
