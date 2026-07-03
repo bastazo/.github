@@ -92,18 +92,19 @@ jobs:
           python-version: "3.11"
 
       - name: Set up for Tests
-        run: docker compose -f spartan/krypteia.test.docker-compose.yml up -d
+        run: docker compose -f spartan/krypteia.test.docker-compose.yml up -d test-krypteia-db test-krypteia-redis
 
       - name: Wait for Test Database
         run: |
-          for i in $(seq 1 30); do
+          for i in $(seq 1 45); do
             docker exec test-krypteia-db sh -c 'mariadb-admin ping -h 127.0.0.1 -u"$MYSQL_USER" -p"$MYSQL_PASSWORD" --silent' && exit 0
             echo "Waiting for test-krypteia-db..."; sleep 2
           done
           echo "db did not become ready"; docker logs test-krypteia-db; exit 1
 
+      # Run in a FRESH django container (after db is up) so it can't race the db.
       - name: Run Tests
-        run: docker exec test-krypteia-django sh -c "python krypteia_backend/manage.py test krypteia_app"
+        run: docker compose -f spartan/krypteia.test.docker-compose.yml run --rm --no-deps --entrypoint sh test-krypteia-django -c "python krypteia_backend/manage.py test krypteia_app"
 
       - name: Dump Container Logs
         if: failure()
