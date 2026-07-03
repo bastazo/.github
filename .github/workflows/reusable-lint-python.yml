@@ -6,4 +6,20 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: psf/black@stable
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Black check (changed files only)
+        run: |
+          pip install --quiet black
+          BASE='${{ github.event.pull_request.base.sha }}'
+          HEAD='${{ github.event.pull_request.head.sha }}'
+          FILES=$(git diff --name-only --diff-filter=ACMR "$BASE...$HEAD" -- '*.py')
+          if [ -z "$FILES" ]; then
+            echo "No python files changed in this PR."
+            exit 0
+          fi
+          echo "Checking changed files:"; echo "$FILES"
+          echo "$FILES" | xargs black --check
