@@ -1,0 +1,61 @@
+name: Reusable Deploy Krypteia Nginx (dev)
+on:
+  workflow_call:
+    secrets:
+      TESTING_PAT: { required: true }
+      DEPLOY_SSH_KEY: { required: true }
+      IGX_TOKEN: { required: true }
+      SQD_PAT: { required: true }
+permissions:
+  contents: read
+  id-token: write
+jobs:
+  build-deploy:
+    runs-on: ubuntu-latest
+    concurrency:
+      group: dev-build-bz_krypteia_nginx
+      cancel-in-progress: false
+    steps:
+      - id: tag
+        run: echo "tag=dev-$(date -u +%Y%m%d%H%M%S)-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: projects/190472363454/locations/global/workloadIdentityPools/github-pool/providers/github-provider
+          service_account: github-ci@bastazo-dev.iam.gserviceaccount.com
+      - uses: google-github-actions/setup-gcloud@v2
+      - run: gcloud auth configure-docker us-central1-docker.pkg.dev --quiet
+      - name: Checkout docker (Dockerfiles)
+        uses: actions/checkout@v4
+        with: { repository: bastazo/docker, ref: main, token: '${{ secrets.TESTING_PAT }}', path: docker }
+      - name: Checkout krypteia-web-app @ development
+        uses: actions/checkout@v4
+        with: { repository: bastazo/krypteia-web-app, ref: development, token: '${{ secrets.TESTING_PAT }}', path: web }
+      - uses: actions/setup-node@v4
+        with: { node-version: "22.13.0", cache: 'npm', cache-dependency-path: web/package-lock.json }
+      - name: Build Angular
+        working-directory: web
+        run: |
+          npm config set @infragistics:registry=${{ vars.NPM_REGISTRY }}
+          npm config set ${{ vars.IG_SCOPE }}:_auth=${{ secrets.IGX_TOKEN }}
+          npm config set @nocode-js:registry=https://npm.pkg.github.com/
+          npm config set //npm.pkg.github.com/:_authToken=${{ secrets.SQD_PAT }}
+          npm install
+          npm run build -- krypteia-web-app --configuration=production
+      - name: Stage static + build & push nginx
+        run: |
+          CTX=docker/images/bz_krypteia_nginx
+          rm -rf "$CTX/static/krypteia-web-app"; mkdir -p "$CTX/static"
+          cp -r web/dist/krypteia-web-app "$CTX/static/krypteia-web-app"
+          IMG=us-central1-docker.pkg.dev/bastazo-dev/bastazo/bz_krypteia_nginx:${{ steps.tag.outputs.tag }}
+          docker build -t "$IMG" "$CTX"
+          docker push "$IMG"
+      - name: Bump values-dev.yaml (nginxTag)
+        run: |
+          install -m 600 /dev/stdin ~/.ssh_key <<< "${{ secrets.DEPLOY_SSH_KEY }}"
+          export GIT_SSH_COMMAND="ssh -i ~/.ssh_key -o StrictHostKeyChecking=accept-new"
+          git clone --branch env/krypteia-dev git@github.com:bastazo/bastazo-deploy.git gitops
+          cd gitops
+          yq -i '.image.nginxTag = "${{ steps.tag.outputs.tag }}"' charts/krypteia/values-dev.yaml
+          git config user.name "bastazo-ci"; git config user.email "ci@bastazo.com"
+          git commit -am "deploy(dev): bz_krypteia_nginx ${{ steps.tag.outputs.tag }}"
+          git push origin env/krypteia-dev

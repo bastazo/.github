@@ -1,0 +1,119 @@
+name: Reusable Krypteia Tests
+on:
+  workflow_call:
+    inputs:
+      under_test_path:
+        description: "Path under spartan/ for the calling repo (e.g. django_apps/bastazo-krypteia-app)"
+        required: true
+        type: string
+    secrets:
+      TESTING_PAT:
+        required: true
+      GCLOUD_SERVICE_ACCOUNT:
+        required: true
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create File Structure
+        run: |
+          mkdir -p spartan/django_projects spartan/django_apps spartan/angular-apps
+
+      - name: Checkout Docker repo
+        uses: actions/checkout@v4
+        with:
+          repository: bastazo/docker
+          ref: main
+          token: ${{ secrets.TESTING_PAT }}
+          path: spartan/docker
+
+      # The three backend repos at main — EXCEPT the caller (skipped by its `if`).
+      - name: Checkout krypteia_backend (main)
+        if: github.repository != 'bastazo/krypteia_backend'
+        uses: actions/checkout@v4
+        with:
+          repository: bastazo/krypteia_backend
+          ref: main
+          token: ${{ secrets.TESTING_PAT }}
+          path: spartan/django_projects/krypteia_backend
+      - name: Checkout bastazo-common-django (main)
+        if: github.repository != 'bastazo/bastazo-common-django'
+        uses: actions/checkout@v4
+        with:
+          repository: bastazo/bastazo-common-django
+          ref: main
+          token: ${{ secrets.TESTING_PAT }}
+          path: spartan/django_apps/bastazo-common-django
+      - name: Checkout bastazo-krypteia-app (main)
+        if: github.repository != 'bastazo/bastazo-krypteia-app'
+        uses: actions/checkout@v4
+        with:
+          repository: bastazo/bastazo-krypteia-app
+          ref: main
+          token: ${{ secrets.TESTING_PAT }}
+          path: spartan/django_apps/bastazo-krypteia-app
+
+      # The calling repo at its PR ref (default repository/ref = caller context).
+      - name: Checkout repo under test (caller @ PR ref)
+        uses: actions/checkout@v4
+        with:
+          path: spartan/${{ inputs.under_test_path }}
+
+      - name: Checkout sample-data
+        uses: actions/checkout@v4
+        with:
+          repository: bastazo/sample-data
+          ref: main
+          token: ${{ secrets.TESTING_PAT }}
+          path: spartan/sample-data
+
+      - name: Add Service Account
+        env:
+          service_account: ${{ secrets.GCLOUD_SERVICE_ACCOUNT }}
+        run: |
+          mkdir -p spartan/sample-data/test_data/bucket
+          echo "$service_account" > spartan/sample-data/test_data/bucket/test_account.json
+
+      - name: Move Test data
+        run: cp -r spartan/sample-data/test_data spartan/django_projects/krypteia_backend/
+
+      - name: Move Compose file
+        run: cp spartan/docker/test/krypteia.test.docker-compose.yml spartan/
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Set up for Tests
+        run: docker compose -f spartan/krypteia.test.docker-compose.yml up -d
+
+      - name: Run Tests
+        run: docker exec test-krypteia-django sh -c "python krypteia_backend/manage.py test krypteia_app"
+
+      - name: Dump Container Logs
+        if: failure()
+        run: |
+          docker ps -a
+          docker logs test-krypteia-django || true
+          docker logs test-krypteia-db || true
+          docker logs test-krypteia-celery || true
+
+      - name: Tear Down
+        if: always()
+        run: docker compose -f spartan/krypteia.test.docker-compose.yml down -v || true
+
+  # Single aggregated status for branch-protection to require.
+  tests-passed:
+    needs: tests
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify tests passed
+        run: |
+          if [ "${{ needs.tests.result }}" != "success" ]; then
+            echo "Krypteia tests did not pass: ${{ needs.tests.result }}"
+            exit 1
+          fi
+          echo "Krypteia tests passed."
