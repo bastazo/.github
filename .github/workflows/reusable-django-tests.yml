@@ -144,3 +144,18 @@ jobs:
       - name: Tear Down
         if: always()
         run: docker compose -f spartan/spartan.test.docker-compose.yml down -v || true
+
+  # Single aggregated status for branch-protection to require, instead of
+  # every matrix leg. Fails if any test group failed.
+  tests-passed:
+    needs: tests
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify all test groups passed
+        run: |
+          if [ "${{ needs.tests.result }}" != "success" ]; then
+            echo "One or more Django test groups did not pass: ${{ needs.tests.result }}"
+            exit 1
+          fi
+          echo "All Django test groups passed."
