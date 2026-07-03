@@ -7,6 +7,11 @@ on:
         required: false
         default: spartan-web-app
         type: string
+      npmInstallArgs:
+        description: "Extra args for npm install (e.g. --legacy-peer-deps)"
+        required: false
+        default: ""
+        type: string
     secrets:
       IGX_TOKEN:
         required: true
@@ -29,6 +34,6 @@ jobs:
           npm config set @nocode-js:registry=https://npm.pkg.github.com/
           npm config set //npm.pkg.github.com/:_authToken=${{ secrets.SQD_PAT }}
       - name: Install dependencies
-        run: npm install
+        run: npm install ${{ inputs.npmInstallArgs }}
       - name: Build
         run: npm run build -- ${{ inputs.project }}

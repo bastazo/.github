@@ -39,7 +39,7 @@ jobs:
           npm config set ${{ vars.IG_SCOPE }}:_auth=${{ secrets.IGX_TOKEN }}
           npm config set @nocode-js:registry=https://npm.pkg.github.com/
           npm config set //npm.pkg.github.com/:_authToken=${{ secrets.SQD_PAT }}
-          npm install
+          npm install --legacy-peer-deps
           npm run build -- krypteia-web-app --configuration=production
       - name: Stage static + build & push nginx
         run: |
