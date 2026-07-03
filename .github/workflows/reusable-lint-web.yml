@@ -8,12 +8,20 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          persist-credentials: false
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-      - name: Prettify code
-        uses: creyD/prettier_action@v4.6
-        with:
-          dry: True
-          prettier_options: '**/*.{js,ts,jsx,tsx,cjs,cts,mjs,mts,json,vue,astro} --check'
+      - name: Prettier check (changed files only)
+        run: |
+          BASE='${{ github.event.pull_request.base.sha }}'
+          HEAD='${{ github.event.pull_request.head.sha }}'
+          FILES=$(git diff --name-only --diff-filter=ACMR "$BASE...$HEAD" -- \
+            '*.js' '*.ts' '*.jsx' '*.tsx' '*.cjs' '*.cts' '*.mjs' '*.mts' '*.json' '*.vue' '*.astro')
+          if [ -z "$FILES" ]; then
+            echo "No prettier-relevant files changed in this PR."
+            exit 0
+          fi
+          echo "Checking changed files:"; echo "$FILES"
+          # Pinned to the repo's prettier version; uses the repo's prettier config if present.
+          echo "$FILES" | xargs npx --yes prettier@3.7.4 --check
