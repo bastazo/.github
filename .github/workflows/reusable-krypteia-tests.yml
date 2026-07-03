@@ -81,6 +81,11 @@ jobs:
       - name: Move Compose file
         run: cp spartan/docker/test/krypteia.test.docker-compose.yml spartan/
 
+      - name: Configure Test Env
+        run: |
+          echo 'ALLOWED_HOSTS=localhost,127.0.0.1,testserver,test-krypteia-django' >> spartan/docker/test/krypteia_env/dev_krypteia.env
+          echo 'DJANGO_DEVELOPMENT=True' >> spartan/docker/test/krypteia_env/dev_krypteia.env
+
       - name: Set up Python 3.11
         uses: actions/setup-python@v5
         with:
@@ -88,6 +93,14 @@ jobs:
 
       - name: Set up for Tests
         run: docker compose -f spartan/krypteia.test.docker-compose.yml up -d
+
+      - name: Wait for Test Database
+        run: |
+          for i in $(seq 1 30); do
+            docker exec test-krypteia-db sh -c 'mariadb-admin ping -h 127.0.0.1 -u"$MYSQL_USER" -p"$MYSQL_PASSWORD" --silent' && exit 0
+            echo "Waiting for test-krypteia-db..."; sleep 2
+          done
+          echo "db did not become ready"; docker logs test-krypteia-db; exit 1
 
       - name: Run Tests
         run: docker exec test-krypteia-django sh -c "python krypteia_backend/manage.py test krypteia_app"
