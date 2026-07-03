@@ -55,7 +55,13 @@ jobs:
           export GIT_SSH_COMMAND="ssh -i ~/.ssh_key -o StrictHostKeyChecking=accept-new"
           git clone --branch env/krypteia-dev git@github.com:bastazo/bastazo-deploy.git gitops
           cd gitops
-          yq -i '.image.nginxTag = "${{ steps.tag.outputs.tag }}"' charts/krypteia/values-dev.yaml
           git config user.name "bastazo-ci"; git config user.email "ci@bastazo.com"
-          git commit -am "deploy(dev): bz_krypteia_nginx ${{ steps.tag.outputs.tag }}"
-          git push origin env/krypteia-dev
+          for attempt in 1 2 3 4 5; do
+            git fetch origin env/krypteia-dev
+            git reset --hard origin/env/krypteia-dev
+            yq -i '.image.nginxTag = "${{ steps.tag.outputs.tag }}"' charts/krypteia/values-dev.yaml
+            git commit -am "deploy(dev): bz_krypteia_nginx ${{ steps.tag.outputs.tag }}"
+            git push origin env/krypteia-dev && exit 0
+            echo "push race on attempt $attempt, retrying..."; sleep $((attempt * 2))
+          done
+          echo "failed to push image-tag bump after retries"; exit 1

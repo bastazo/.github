@@ -55,7 +55,13 @@ jobs:
           export GIT_SSH_COMMAND="ssh -i ~/.ssh_key -o StrictHostKeyChecking=accept-new"
           git clone --branch env/spartan-dev git@github.com:bastazo/bastazo-deploy.git gitops
           cd gitops
-          yq -i '.image.nginxTag = "${{ steps.tag.outputs.tag }}"' charts/spartan/values-dev.yaml
           git config user.name "bastazo-ci"; git config user.email "ci@bastazo.com"
-          git commit -am "deploy(dev): bz_spartan_nginx ${{ steps.tag.outputs.tag }}"
-          git push origin env/spartan-dev
+          for attempt in 1 2 3 4 5; do
+            git fetch origin env/spartan-dev
+            git reset --hard origin/env/spartan-dev
+            yq -i '.image.nginxTag = "${{ steps.tag.outputs.tag }}"' charts/spartan/values-dev.yaml
+            git commit -am "deploy(dev): bz_spartan_nginx ${{ steps.tag.outputs.tag }}"
+            git push origin env/spartan-dev && exit 0
+            echo "push race on attempt $attempt, retrying..."; sleep $((attempt * 2))
+          done
+          echo "failed to push image-tag bump after retries"; exit 1
