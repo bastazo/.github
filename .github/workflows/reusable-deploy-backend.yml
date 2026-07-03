@@ -1,0 +1,58 @@
+name: Reusable Deploy Backend (dev)
+on:
+  workflow_call:
+    secrets:
+      TESTING_PAT: { required: true }
+      DEPLOY_SSH_KEY: { required: true }
+permissions:
+  contents: read
+  id-token: write
+jobs:
+  build-deploy:
+    runs-on: ubuntu-latest
+    concurrency:
+      group: dev-build-bz_spartan_backend
+      cancel-in-progress: false
+    steps:
+      - id: tag
+        run: echo "tag=dev-$(date -u +%Y%m%d%H%M%S)-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: projects/190472363454/locations/global/workloadIdentityPools/github-pool/providers/github-provider
+          service_account: github-ci@bastazo-dev.iam.gserviceaccount.com
+      - uses: google-github-actions/setup-gcloud@v2
+      - run: gcloud auth configure-docker us-central1-docker.pkg.dev --quiet
+      - name: Checkout docker (Dockerfiles)
+        uses: actions/checkout@v4
+        with: { repository: bastazo/docker, ref: main, token: '${{ secrets.TESTING_PAT }}', path: docker }
+      - name: Checkout spartan_backend @ development
+        uses: actions/checkout@v4
+        with: { repository: bastazo/spartan_backend, ref: development, token: '${{ secrets.TESTING_PAT }}', path: src/spartan_backend }
+      - name: Checkout bastazo-common-django @ development
+        uses: actions/checkout@v4
+        with: { repository: bastazo/bastazo-common-django, ref: development, token: '${{ secrets.TESTING_PAT }}', path: src/bastazo-common-django }
+      - name: Checkout bastazo-spartan-app @ development
+        uses: actions/checkout@v4
+        with: { repository: bastazo/bastazo-spartan-app, ref: development, token: '${{ secrets.TESTING_PAT }}', path: src/bastazo-spartan-app }
+      - name: Assemble current_patch
+        run: |
+          CTX=docker/images/bz_spartan_backend
+          rm -rf "$CTX/current_patch"; mkdir -p "$CTX/current_patch"
+          cp -r src/spartan_backend "$CTX/current_patch/spartan_backend"
+          cp -r src/bastazo-common-django/bastazo_common "$CTX/current_patch/spartan_backend/bastazo_common"
+          cp -r src/bastazo-spartan-app/spartan_app "$CTX/current_patch/spartan_backend/spartan_app"
+      - name: Build & push
+        run: |
+          IMG=us-central1-docker.pkg.dev/bastazo-dev/bastazo/bz_spartan_backend:${{ steps.tag.outputs.tag }}
+          docker build -t "$IMG" docker/images/bz_spartan_backend
+          docker push "$IMG"
+      - name: Bump values-dev.yaml (backendTag)
+        run: |
+          install -m 600 /dev/stdin ~/.ssh_key <<< "${{ secrets.DEPLOY_SSH_KEY }}"
+          export GIT_SSH_COMMAND="ssh -i ~/.ssh_key -o StrictHostKeyChecking=accept-new"
+          git clone --branch env/spartan-dev git@github.com:bastazo/bastazo-deploy.git gitops
+          cd gitops
+          yq -i '.image.backendTag = "${{ steps.tag.outputs.tag }}"' charts/spartan/values-dev.yaml
+          git config user.name "bastazo-ci"; git config user.email "ci@bastazo.com"
+          git commit -am "deploy(dev): bz_spartan_backend ${{ steps.tag.outputs.tag }}"
+          git push origin env/spartan-dev
