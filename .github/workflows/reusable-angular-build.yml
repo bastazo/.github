@@ -1,0 +1,37 @@
+name: Reusable Angular Build
+on:
+  workflow_call:
+    inputs:
+      project:
+        description: "Angular project to build"
+        required: false
+        default: spartan-web-app
+        type: string
+    secrets:
+      IGX_TOKEN:
+        required: true
+      SQD_PAT:
+        required: true
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node-version: [22.13.0]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Use Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: 'npm'
+      - name: Configure private registries
+        run: |
+          npm config set @infragistics:registry=${{ vars.NPM_REGISTRY }}
+          npm config set ${{ vars.IG_SCOPE }}:_auth=${{ secrets.IGX_TOKEN }}
+          npm config set @nocode-js:registry=https://npm.pkg.github.com/
+          npm config set //npm.pkg.github.com/:_authToken=${{ secrets.SQD_PAT }}
+      - name: Install dependencies
+        run: npm install
+      - name: Build
+        run: npm run build -- ${{ inputs.project }}

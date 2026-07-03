@@ -1,0 +1,146 @@
+name: Reusable Django Tests
+on:
+  workflow_call:
+    inputs:
+      under_test_path:
+        description: "Path under spartan/ for the calling repo (e.g. django_apps/bastazo-spartan-app)"
+        required: true
+        type: string
+    secrets:
+      TESTING_PAT:
+        required: true
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix:
+        test-group:
+          - spartan_app.tests.integrations.axonius
+          - spartan_app.tests.integrations.salvador_technology
+          - spartan_app.tests.integrations.test_axonius_cyber_assets_sync_v2
+          - spartan_app.tests.manage.assets.test_asset_hierarchy
+          - spartan_app.tests.manage.assets.test_patch_hierarchy
+          - spartan_app.tests.manage.assets.test_cyberasset_attributes
+          - spartan_app.tests.manage.assets.test_asset_management
+          - spartan_app.tests.manage.configurations
+          - spartan_app.tests.manage.manage_vulnerability_sources
+          - spartan_app.tests.manage.map_vuln_sources
+          - spartan_app.tests.manage.machine_learning
+          - spartan_app.tests.manage.vendor_feed
+          - spartan_app.tests.attack_simulation
+          - spartan_app.tests.bastazo_common
+          - spartan_app.tests.cset_imports
+          - spartan_app.tests.playbook
+          - spartan_app.tests.settings
+          - spartan_app.tests.work
+    name: tests (${{ matrix.test-group }})
+    steps:
+      - name: Create File Structure
+        run: |
+          mkdir -p spartan/django_projects spartan/django_apps spartan/angular-apps
+
+      - name: Checkout Docker repo
+        uses: actions/checkout@v4
+        with:
+          repository: bastazo/docker
+          ref: main
+          token: ${{ secrets.TESTING_PAT }}
+          path: spartan/docker
+
+      # The three backend repos at main — EXCEPT the caller (skipped by its `if`).
+      - name: Checkout spartan_backend (main)
+        if: github.repository != 'bastazo/spartan_backend'
+        uses: actions/checkout@v4
+        with:
+          repository: bastazo/spartan_backend
+          ref: main
+          token: ${{ secrets.TESTING_PAT }}
+          path: spartan/django_projects/spartan_backend
+      - name: Checkout bastazo-common-django (main)
+        if: github.repository != 'bastazo/bastazo-common-django'
+        uses: actions/checkout@v4
+        with:
+          repository: bastazo/bastazo-common-django
+          ref: main
+          token: ${{ secrets.TESTING_PAT }}
+          path: spartan/django_apps/bastazo-common-django
+      - name: Checkout bastazo-spartan-app (main)
+        if: github.repository != 'bastazo/bastazo-spartan-app'
+        uses: actions/checkout@v4
+        with:
+          repository: bastazo/bastazo-spartan-app
+          ref: main
+          token: ${{ secrets.TESTING_PAT }}
+          path: spartan/django_apps/bastazo-spartan-app
+
+      # The calling repo at its PR ref (default repository/ref = caller context).
+      - name: Checkout repo under test (caller @ PR ref)
+        uses: actions/checkout@v4
+        with:
+          path: spartan/${{ inputs.under_test_path }}
+
+      - name: Move Compose file
+        run: cp spartan/docker/test/spartan.test.docker-compose.yml spartan/
+
+      - name: Checkout sample-data
+        uses: actions/checkout@v4
+        with:
+          repository: bastazo/sample-data
+          ref: main
+          token: ${{ secrets.TESTING_PAT }}
+          path: spartan/sample-data
+
+      - name: Move Test data
+        run: cp -r spartan/sample-data/test_data spartan/django_projects/spartan_backend/test_data
+
+      - name: Configure Test Env
+        run: echo 'ALLOWED_HOSTS=localhost,127.0.0.1,testserver,test-spartan-django' >> spartan/docker/test/spartan_env/test_spartan.env
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Pre-pull Test Images
+        run: |
+          for image in mariadb:11.3.2-jammy redis:7.0.5-alpine; do
+            for i in 1 2 3; do
+              docker pull "$image" && break
+              echo "Retry $i for $image failed, waiting..."; sleep 10
+            done
+          done
+
+      - name: Set up for Tests
+        run: |
+          for i in 1 2 3; do
+            docker compose -f spartan/spartan.test.docker-compose.yml up --pull never -d test-spartan-db test-spartan-redis && exit 0
+            echo "compose up failed on attempt $i, retrying..."; sleep 10
+          done
+          echo "compose up failed after 3 attempts"; exit 1
+
+      - name: Wait for Test Database
+        run: |
+          for i in $(seq 1 30); do
+            docker exec test-spartan-db sh -c 'mariadb-admin ping -h 127.0.0.1 -u"$MYSQL_USER" -p"$MYSQL_PASSWORD" --silent' && exit 0
+            echo "Waiting for test-spartan-db..."; sleep 2
+          done
+          echo "db not ready"; docker logs test-spartan-db; exit 1
+
+      - name: Run Tests
+        run: |
+          docker compose -f spartan/spartan.test.docker-compose.yml run --rm --no-deps --entrypoint sh test-spartan-django -c "cd /bastazo/spartan_backend && python manage.py test ${{ matrix.test-group }}"
+
+      - name: Dump Container Logs
+        if: failure()
+        run: |
+          docker ps -a
+          docker logs test-spartan-django || true
+          docker logs test-spartan-db || true
+          docker logs test-spartan-celery || true
+
+      - name: Tear Down
+        if: always()
+        run: docker compose -f spartan/spartan.test.docker-compose.yml down -v || true
