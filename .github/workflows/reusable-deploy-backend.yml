@@ -62,3 +62,11 @@ jobs:
             echo "push race on attempt $attempt, retrying..."; sleep $((attempt * 2))
           done
           echo "failed to push image-tag bump after retries"; exit 1
+      - name: Get GKE credentials
+        uses: google-github-actions/get-gke-credentials@v2
+        with:
+          cluster_name: bastazo-dev-autopilot
+          location: us-central1
+          project_id: bastazo-dev
+      - name: Trigger Argo CD reconcile (instant deploy)
+        run: kubectl -n argocd annotate application spartan-dev argocd.argoproj.io/refresh=hard --overwrite
