@@ -50,29 +50,31 @@ jobs:
           token: ${{ secrets.TESTING_PAT }}
           path: spartan/docker
 
-      # The three backend repos at main — EXCEPT the caller (skipped by its `if`).
-      - name: Checkout spartan_backend (main)
+      # The three backend repos at development — matching the CD (dev) deploy
+      # workflow, so PRs are tested against the exact companions they will
+      # deploy with. EXCEPT the caller (skipped by its `if`).
+      - name: Checkout spartan_backend (development)
         if: github.repository != 'bastazo/spartan_backend'
         uses: actions/checkout@v4
         with:
           repository: bastazo/spartan_backend
-          ref: main
+          ref: development
           token: ${{ secrets.TESTING_PAT }}
           path: spartan/django_projects/spartan_backend
-      - name: Checkout bastazo-common-django (main)
+      - name: Checkout bastazo-common-django (development)
         if: github.repository != 'bastazo/bastazo-common-django'
         uses: actions/checkout@v4
         with:
           repository: bastazo/bastazo-common-django
-          ref: main
+          ref: development
           token: ${{ secrets.TESTING_PAT }}
           path: spartan/django_apps/bastazo-common-django
-      - name: Checkout bastazo-spartan-app (main)
+      - name: Checkout bastazo-spartan-app (development)
         if: github.repository != 'bastazo/bastazo-spartan-app'
         uses: actions/checkout@v4
         with:
           repository: bastazo/bastazo-spartan-app
-          ref: main
+          ref: development
           token: ${{ secrets.TESTING_PAT }}
           path: spartan/django_apps/bastazo-spartan-app
 
