@@ -40,6 +40,7 @@ jobs:
           - spartan_app.tests.settings
           - spartan_app.tests.work
           - bastazo_common.tests
+          - spartan_app.tests.security
     name: tests (${{ matrix.test-group }})
     steps:
       - name: Create File Structure
