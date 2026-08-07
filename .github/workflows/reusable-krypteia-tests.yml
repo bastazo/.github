@@ -114,8 +114,12 @@ jobs:
           echo "db did not become ready"; docker logs test-krypteia-db; exit 1
 
       # Run in a FRESH django container (after db is up) so it can't race the db.
+      # bastazo_common.tests rides along here rather than in its own job: this
+      # is the only workflow with an engine matrix, and bulk_ops' re-select
+      # branch is MySQL-only, so this is the only place its tests are more than
+      # a skip. reusable-django-tests.yml runs them too, for the MariaDB path.
       - name: Run Tests
-        run: docker compose -f spartan/krypteia.test.active.yml run --rm --no-deps --entrypoint sh test-krypteia-django -c "python krypteia_backend/manage.py test krypteia_app"
+        run: docker compose -f spartan/krypteia.test.active.yml run --rm --no-deps --entrypoint sh test-krypteia-django -c "python krypteia_backend/manage.py test krypteia_app bastazo_common.tests"
 
       - name: Dump Container Logs
         if: failure()
