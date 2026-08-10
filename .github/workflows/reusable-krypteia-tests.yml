@@ -33,29 +33,43 @@ jobs:
           token: ${{ secrets.TESTING_PAT }}
           path: spartan/docker
 
-      # The three backend repos at main — EXCEPT the caller (skipped by its `if`).
-      - name: Checkout krypteia_backend (main)
+      # The three backend repos at the SAME branch line the PR targets — EXCEPT
+      # the caller (skipped by its `if`).
+      #
+      # These were pinned to `main`, which meant a PR into `development` was
+      # tested against `main` siblings: a cross-repo change could not go green
+      # until every other repo had already been promoted to main, and CI was
+      # validating a combination that is not what gets deployed (the deploy
+      # workflows check these same repos out at `development`).
+      #
+      # `github.base_ref` is the PR's target branch. The `|| 'main'` fallback
+      # covers any non-pull_request caller, where base_ref is empty.
+      #
+      # Only these three follow base_ref. docker and sample-data stay on main —
+      # they have no `staging` branch, so following base_ref would break every
+      # PR targeting staging.
+      - name: Checkout krypteia_backend (PR base branch)
         if: github.repository != 'bastazo/krypteia_backend'
         uses: actions/checkout@v4
         with:
           repository: bastazo/krypteia_backend
-          ref: main
+          ref: ${{ github.base_ref || 'main' }}
           token: ${{ secrets.TESTING_PAT }}
           path: spartan/django_projects/krypteia_backend
-      - name: Checkout bastazo-common-django (main)
+      - name: Checkout bastazo-common-django (PR base branch)
         if: github.repository != 'bastazo/bastazo-common-django'
         uses: actions/checkout@v4
         with:
           repository: bastazo/bastazo-common-django
-          ref: main
+          ref: ${{ github.base_ref || 'main' }}
           token: ${{ secrets.TESTING_PAT }}
           path: spartan/django_apps/bastazo-common-django
-      - name: Checkout bastazo-krypteia-app (main)
+      - name: Checkout bastazo-krypteia-app (PR base branch)
         if: github.repository != 'bastazo/bastazo-krypteia-app'
         uses: actions/checkout@v4
         with:
           repository: bastazo/bastazo-krypteia-app
-          ref: main
+          ref: ${{ github.base_ref || 'main' }}
           token: ${{ secrets.TESTING_PAT }}
           path: spartan/django_apps/bastazo-krypteia-app
 
