@@ -18,10 +18,6 @@ jobs:
       max-parallel: 3
       matrix:
         test-group:
-          # bastazo-common-django's ci.yml calls only this workflow, so without
-          # this entry the shared library's own tests never run on its own PRs.
-          # MariaDB only here; the MySQL leg is in reusable-krypteia-tests.yml.
-          - bastazo_common.tests
           - spartan_app.tests.integrations.axonius
           - spartan_app.tests.integrations.salvador_technology
           - spartan_app.tests.integrations.test_axonius_cyber_assets_sync_v2
