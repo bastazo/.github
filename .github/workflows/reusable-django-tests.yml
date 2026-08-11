@@ -17,6 +17,9 @@ jobs:
       fail-fast: false
       max-parallel: 3
       matrix:
+        # MANUAL ALLOWLIST. Django's runner only executes what is named here, so
+        # a new test package is invisible to CI until it is added to this list —
+        # add the group in the same PR that adds the tests.
         test-group:
           - spartan_app.tests.integrations.axonius
           - spartan_app.tests.integrations.salvador_technology
@@ -36,6 +39,7 @@ jobs:
           - spartan_app.tests.playbook
           - spartan_app.tests.settings
           - spartan_app.tests.work
+          - bastazo_common.tests
     name: tests (${{ matrix.test-group }})
     steps:
       - name: Create File Structure
