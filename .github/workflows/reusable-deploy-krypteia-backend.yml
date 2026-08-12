@@ -1,6 +1,70 @@
-name: Reusable Deploy Krypteia Backend (dev)
+name: Reusable Deploy Krypteia Backend
 on:
   workflow_call:
+    # EVERY input defaults to the dev values this workflow used before it was
+    # parameterized. That is deliberate and load-bearing: the callers live in
+    # other repos and cannot merge atomically with this file, and this file is
+    # consumed as @reusable-workflows, so a required input would break dev CD
+    # the moment this merges. With defaults, existing callers keep working
+    # untouched and only the prod caller passes anything.
+    inputs:
+      environment:
+        description: "dev or prod. Drives the image tag prefix, concurrency group and commit message."
+        required: false
+        type: string
+        default: dev
+      source_ref:
+        description: "Branch to build the three source repos from."
+        required: false
+        type: string
+        default: development
+      wif_provider:
+        description: "Full Workload Identity provider resource name."
+        required: false
+        type: string
+        default: projects/190472363454/locations/global/workloadIdentityPools/github-pool/providers/github-provider
+      service_account:
+        description: "Service account impersonated to push images and reach the Argo cluster."
+        required: false
+        type: string
+        default: github-ci@bastazo-dev.iam.gserviceaccount.com
+      registry:
+        description: "Artifact Registry path."
+        required: false
+        type: string
+        default: us-central1-docker.pkg.dev/bastazo-dev/bastazo
+      gitops_branch:
+        description: "bastazo-deploy branch carrying this environment's values file."
+        required: false
+        type: string
+        default: env/krypteia-dev
+      values_file:
+        description: "Values file to bump, path relative to the repo root."
+        required: false
+        type: string
+        default: charts/krypteia/values-dev.yaml
+      argo_app:
+        description: "Name of the Argo CD Application to refresh."
+        required: false
+        type: string
+        default: krypteia-dev
+      argo_cluster:
+        description: >-
+          Cluster where ARGO CD ITSELF runs -- NOT the deployment target. Argo
+          manages the prod cluster remotely from the dev cluster, so a prod
+          deploy still refreshes the Application object on bastazo-dev-autopilot.
+          Setting this to the prod cluster would fail: there is no Argo there.
+        required: false
+        type: string
+        default: bastazo-dev-autopilot
+      argo_cluster_location:
+        required: false
+        type: string
+        default: us-central1
+      argo_cluster_project:
+        required: false
+        type: string
+        default: bastazo-dev
     secrets:
       TESTING_PAT: { required: true }
       DEPLOY_SSH_KEY: { required: true }
@@ -11,29 +75,30 @@ jobs:
   build-deploy:
     runs-on: ubuntu-latest
     concurrency:
-      group: dev-build-bz_krypteia_backend
+      # Per-environment, so a prod deploy never queues behind a dev one.
+      group: ${{ inputs.environment }}-build-bz_krypteia_backend
       cancel-in-progress: false
     steps:
       - id: tag
-        run: echo "tag=dev-$(date -u +%Y%m%d%H%M%S)-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+        run: echo "tag=${{ inputs.environment }}-$(date -u +%Y%m%d%H%M%S)-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
       - uses: google-github-actions/auth@v2
         with:
-          workload_identity_provider: projects/190472363454/locations/global/workloadIdentityPools/github-pool/providers/github-provider
-          service_account: github-ci@bastazo-dev.iam.gserviceaccount.com
+          workload_identity_provider: ${{ inputs.wif_provider }}
+          service_account: ${{ inputs.service_account }}
       - uses: google-github-actions/setup-gcloud@v2
-      - run: gcloud auth configure-docker us-central1-docker.pkg.dev --quiet
+      - run: gcloud auth configure-docker $(echo "${{ inputs.registry }}" | cut -d/ -f1) --quiet
       - name: Checkout docker (Dockerfiles)
         uses: actions/checkout@v4
         with: { repository: bastazo/docker, ref: main, token: '${{ secrets.TESTING_PAT }}', path: docker }
-      - name: Checkout krypteia_backend @ development
+      - name: Checkout krypteia_backend
         uses: actions/checkout@v4
-        with: { repository: bastazo/krypteia_backend, ref: development, token: '${{ secrets.TESTING_PAT }}', path: src/krypteia_backend }
-      - name: Checkout bastazo-common-django @ development
+        with: { repository: bastazo/krypteia_backend, ref: '${{ inputs.source_ref }}', token: '${{ secrets.TESTING_PAT }}', path: src/krypteia_backend }
+      - name: Checkout bastazo-common-django
         uses: actions/checkout@v4
-        with: { repository: bastazo/bastazo-common-django, ref: development, token: '${{ secrets.TESTING_PAT }}', path: src/bastazo-common-django }
-      - name: Checkout bastazo-krypteia-app @ development
+        with: { repository: bastazo/bastazo-common-django, ref: '${{ inputs.source_ref }}', token: '${{ secrets.TESTING_PAT }}', path: src/bastazo-common-django }
+      - name: Checkout bastazo-krypteia-app
         uses: actions/checkout@v4
-        with: { repository: bastazo/bastazo-krypteia-app, ref: development, token: '${{ secrets.TESTING_PAT }}', path: src/bastazo-krypteia-app }
+        with: { repository: bastazo/bastazo-krypteia-app, ref: '${{ inputs.source_ref }}', token: '${{ secrets.TESTING_PAT }}', path: src/bastazo-krypteia-app }
       - name: Assemble current_patch
         run: |
           CTX=docker/images/bz_krypteia_backend
@@ -43,30 +108,39 @@ jobs:
           cp -r src/bastazo-krypteia-app/krypteia_app "$CTX/current_patch/krypteia_backend/krypteia_app"
       - name: Build & push
         run: |
-          IMG=us-central1-docker.pkg.dev/bastazo-dev/bastazo/bz_krypteia_backend:${{ steps.tag.outputs.tag }}
+          IMG=${{ inputs.registry }}/bz_krypteia_backend:${{ steps.tag.outputs.tag }}
           docker build -t "$IMG" docker/images/bz_krypteia_backend
           docker push "$IMG"
-      - name: Bump values-dev.yaml (backendTag)
+      - name: Bump image tag on the GitOps branch
         run: |
           install -m 600 /dev/stdin ~/.ssh_key <<< "${{ secrets.DEPLOY_SSH_KEY }}"
           export GIT_SSH_COMMAND="ssh -i ~/.ssh_key -o StrictHostKeyChecking=accept-new"
-          git clone --branch env/krypteia-dev git@github.com:bastazo/bastazo-deploy.git gitops
+          git clone --branch ${{ inputs.gitops_branch }} git@github.com:bastazo/bastazo-deploy.git gitops
           cd gitops
           git config user.name "bastazo-ci"; git config user.email "ci@bastazo.com"
           for attempt in 1 2 3 4 5; do
-            git fetch origin env/krypteia-dev
-            git reset --hard origin/env/krypteia-dev
-            yq -i '.image.backendTag = "${{ steps.tag.outputs.tag }}"' charts/krypteia/values-dev.yaml
-            git commit -am "deploy(dev): bz_krypteia_backend ${{ steps.tag.outputs.tag }}"
-            git push origin env/krypteia-dev && exit 0
+            git fetch origin ${{ inputs.gitops_branch }}
+            git reset --hard origin/${{ inputs.gitops_branch }}
+            yq -i '.image.backendTag = "${{ steps.tag.outputs.tag }}"' ${{ inputs.values_file }}
+            git commit -am "deploy(${{ inputs.environment }}): bz_krypteia_backend ${{ steps.tag.outputs.tag }}"
+            git push origin ${{ inputs.gitops_branch }} && exit 0
             echo "push race on attempt $attempt, retrying..."; sleep $((attempt * 2))
           done
           echo "failed to push image-tag bump after retries"; exit 1
-      - name: Get GKE credentials
+      - name: Get GKE credentials for the Argo CD cluster
         uses: google-github-actions/get-gke-credentials@v2
         with:
-          cluster_name: bastazo-dev-autopilot
-          location: us-central1
-          project_id: bastazo-dev
-      - name: Trigger Argo CD reconcile (instant deploy)
-        run: kubectl -n argocd annotate application krypteia-dev argocd.argoproj.io/refresh=hard --overwrite
+          cluster_name: ${{ inputs.argo_cluster }}
+          location: ${{ inputs.argo_cluster_location }}
+          project_id: ${{ inputs.argo_cluster_project }}
+      - name: Trigger Argo CD reconcile
+        run: kubectl -n argocd annotate application ${{ inputs.argo_app }} argocd.argoproj.io/refresh=hard --overwrite
+      - name: Note sync policy
+        run: |
+          POLICY=$(kubectl -n argocd get application ${{ inputs.argo_app }} \
+            -o jsonpath='{.spec.syncPolicy.automated}' 2>/dev/null || true)
+          if [ -z "$POLICY" ]; then
+            echo "::notice::${{ inputs.argo_app }} is on MANUAL sync. The image tag is staged on ${{ inputs.gitops_branch }} and Argo has been refreshed, but nothing deploys until an operator syncs. This is deliberate for prod until the Phase E migration completes."
+          else
+            echo "::notice::${{ inputs.argo_app }} has automated sync; the refresh above will roll it out."
+          fi
